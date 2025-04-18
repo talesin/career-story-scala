@@ -1,14 +1,16 @@
 import zio._
 import zio.json._
-import anthology.{CareerStories, OpenAIService, StoryPrompts}
+import anthology.{CareerStories, OpenAIService, StoryPrompts, OpenAIClientService}
 
 object Main extends ZIOAppDefault {
+  val apiKeyLayer: ZLayer[Any, RuntimeException, String] = 
+    ZLayer.fromZIO(
+      System.env("OPENAI_API_KEY")
+        .someOrFail(new RuntimeException("OPENAI_API_KEY environment variable not set"))
+    )
+
   def run: ZIO[Any, Throwable, Unit] = {
     for {
-      // Get API key from environment
-      apiKey <- System.env("OPENAI_API_KEY")
-        .someOrFail(new RuntimeException("OPENAI_API_KEY environment variable not set"))
-      
       // Read and parse career stories
       storiesJson <- ZIO.readFile("src/test/career-stories.json")
       stories <- ZIO.fromEither(storiesJson.fromJson[CareerStories])
@@ -23,9 +25,6 @@ object Main extends ZIOAppDefault {
       storyPrompt <- ZIO.fromOption(prompts.prompts.get("story_analysis"))
         .orElseFail(new RuntimeException("Story analysis prompt not found"))
       
-      // Initialize OpenAI service
-      openAiService <- OpenAIService.make(apiKey)
-      
       // Process each story
       _ <- ZIO.foreach(stories.stories) { story =>
         for {
@@ -33,6 +32,7 @@ object Main extends ZIOAppDefault {
           prompt <- ZIO.succeed(storyPrompt.user.replace("${story}", story.situation))
           
           // Get completion from OpenAI
+          openAiService <- ZIO.service[OpenAIService]
           analysis <- openAiService.completeChat(
             systemMessage = storyPrompt.system,
             prompt = prompt
@@ -46,5 +46,9 @@ object Main extends ZIOAppDefault {
         } yield ()
       }
     } yield ()
-  }
+  }.provide(
+    apiKeyLayer,
+    OpenAIClientService.live,
+    OpenAIService.live
+  )
 }

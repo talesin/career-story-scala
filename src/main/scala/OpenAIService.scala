@@ -1,7 +1,6 @@
 package anthology
 
 import zio._
-import com.openai.client.okhttp.OpenAIOkHttpClient
 import com.openai.models.chat.completions.ChatCompletionCreateParams
 import com.openai.models.ChatModel
 import com.openai.models.FunctionDefinition
@@ -13,10 +12,9 @@ import com.openai.core.ObjectMappers.jsonMapper
 import scala.collection.JavaConverters._
 import zio.json._
 
-class OpenAIService(apiKey: String) {
-  private val client = OpenAIOkHttpClient.builder()
-    .apiKey(apiKey)
-    .build()
+class OpenAIService(client: OpenAIClientService) {
+  private def jmap[K, V](entries: (K, V)*): java.util.Map[K, V] = 
+    Map(entries*).asJava
 
   private val analyzeStoryFunction = FunctionDefinition.builder()
     .name("analyze_story")
@@ -26,45 +24,44 @@ class OpenAIService(apiKey: String) {
         .putAdditionalProperty("type", JsonValue.from("object"))
         .putAdditionalProperty(
           "properties",
-          JsonValue.from(Map(
-            "questions" -> Map(
+          JsonValue.from(jmap(
+            "questions" -> jmap(
               "type" -> "array",
-              "items" -> Map("type" -> "string"),
+              "items" -> jmap("type" -> "string"),
               "description" -> "Questions to help improve the story"
-            ).asJava,
-            "tips" -> Map(
+            ),
+            "tips" -> jmap(
               "type" -> "array",
-              "items" -> Map("type" -> "string"),
+              "items" -> jmap("type" -> "string"),
               "description" -> "Tips for improving the story"
-            ).asJava,
-            "versions" -> Map(
+            ),
+            "versions" -> jmap(
               "type" -> "array",
-              "items" -> Map(
+              "items" -> jmap(
                 "type" -> "object",
-                "properties" -> Map(
-                  "situation" -> Map(
+                "properties" -> jmap(
+                  "situation" -> jmap(
                     "type" -> "string",
                     "description" -> "The situation part of the story"
-                  ).asJava,
-                  "action" -> Map(
+                  ),
+                  "action" -> jmap(
                     "type" -> "string",
                     "description" -> "The action part of the story"
-                  ).asJava,
-                  "result" -> Map(
+                  ),
+                  "result" -> jmap(
                     "type" -> "string",
                     "description" -> "The result part of the story"
-                  ).asJava
-                ).asJava,
+                  )
+                ),
                 "required" -> List("situation", "action", "result").asJava
-              ).asJava,
+              ),
               "description" -> "Three different versions of the story in SAR format"
-            ).asJava
-          ).asJava)
+            )
+          ))
         )
         .putAdditionalProperty("required", JsonValue.from(List().asJava))
         .build()
     )
-    .build()
 
   private def createChatParams(systemMessage: String, prompt: String): ChatCompletionCreateParams = {
     ChatCompletionCreateParams.builder()
@@ -73,7 +70,7 @@ class OpenAIService(apiKey: String) {
       .addUserMessage(prompt)
       .addTool(
         com.openai.models.chat.completions.ChatCompletionTool.builder()
-          .function(analyzeStoryFunction)
+          .function(analyzeStoryFunction.build())
           .build()
       )
       .build()
@@ -88,7 +85,7 @@ class OpenAIService(apiKey: String) {
   def completeChat(systemMessage: String, prompt: String): IO[Throwable, StoryResponse] = {
     for {
       params <- ZIO.succeed(createChatParams(systemMessage, prompt))
-      response <- ZIO.attempt(client.chat().completions().create(params))
+      response <- client.createChat(params)
       toolCall <- ZIO.attempt(response.choices().get(0).message().toolCalls().get().get(0))
         .orElseFail(new RuntimeException("No tool calls in response"))
       function <- ZIO.succeed(toolCall.function())
@@ -100,6 +97,6 @@ class OpenAIService(apiKey: String) {
 }
 
 object OpenAIService {
-  def make(apiKey: String): UIO[OpenAIService] = 
-    ZIO.succeed(new OpenAIService(apiKey))
+  val live: URLayer[OpenAIClientService, OpenAIService] = 
+    ZLayer.fromFunction(new OpenAIService(_))
 } 
