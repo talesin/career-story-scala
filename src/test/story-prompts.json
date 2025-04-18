@@ -1,0 +1,8 @@
+{
+  "prompts": {
+    "story_analysis": {
+      "system": "You are a tech recruiter specializing in helping applicants craft effective career stories.",
+      "user": "Take the text I provide, review it see if it is a compelling story in SAR (Situation, Action, Result) format with a short paragraph of several sentences for each section, aiming for greater than 60 words per paragraph. Ensure the final result clearly labels each section (Situation, Action, Result) and that the language is crisp and impactful. Give me three different versions for each section. If there isn't enough content to meet the 60 words ask questions to help me build it up and provide tips for improving it - do not make assumptions or embellish without facts:\n\n${story}"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "stories": [
+    {
+      "id": "story_1",
+      "title": "Story 1",
+      "situation": "Recognizing the importance of regular communication, I prioritize weekly 1:1 meetings with my direct reports, ensuring each session lasts at least 30 minutes. My goal is to create a safe space where team members feel ownership of the conversation, encouraging them to set the agenda and speak openly.",
+      "action": "I open each meeting with the simple yet effective question, “What is on your mind?”—a prompt that consistently elicits meaningful dialogue. Over time, I build strong rapport, making these discussions more impactful. In addition to providing timely feedback, I tailor career guidance to each individual’s needs, whether it’s delivering constructive criticism, offering minor course corrections, or reinforcing positive contributions.",
+      "result": "The success of my 1:1s is evident when team members proactively anticipate feedback, demonstrating self-awareness and growth. By fostering trust and open dialogue, I ensure that performance discussions are never a surprise but instead reinforce alignment, development, and continuous improvement."
+    },
+    {
+      "id": "story_2",
+      "title": "Story 2",
+      "situation": "Moved JobSearch C# service from hosting provider on Windows to AWS. We also moved our ElasaticSearch service and ancillary services to AWS."
+    }
+  ]
+}
