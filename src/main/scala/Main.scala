@@ -33,7 +33,7 @@ object Main extends ZIOAppDefault {
           
           // Get completion from OpenAI
           openAiService <- ZIO.service[OpenAIService]
-          analysis <- openAiService.completeChat(
+          response <- openAiService.completeChat(
             systemMessage = storyPrompt.system,
             prompt = prompt
           )
@@ -41,7 +41,19 @@ object Main extends ZIOAppDefault {
           // Print results
           _ <- ZIO.succeed {
             println(s"\nStory: ${story.title} (${story.id})")
-            println(s"Analysis: $analysis")
+            println("Analysis:")
+            println("----------")
+            println("Questions:")
+            response.questions.getOrElse(List.empty).foreach(q => println(s"- $q"))
+            println("Tips:")
+            response.tips.getOrElse(List.empty).foreach(t => println(s"- $t"))
+            println("Versions:")
+            response.versions.getOrElse(List.empty).foreach { version =>
+              println(s"  Situation: ${version.situation}")
+              println(s"  Action: ${version.action}")
+              println(s"  Result: ${version.result}")
+            }
+            println("----------")
           }
         } yield ()
       }
