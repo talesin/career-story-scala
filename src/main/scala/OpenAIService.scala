@@ -76,23 +76,29 @@ class OpenAIService(client: OpenAIClientService) {
       .build()
   }
 
-  private def parseResponse(response: String): IO[RuntimeException, StoryResponse] = {
+  private def parseResponse(response: String): ZIO[Any, AppError, StoryResponse] = {
     ZIO.fromEither(response.fromJson[StoryResponse])
-      .tapError(e => ZIO.debug(s"Failed to parse response: $response"))
-      .mapError(e => new RuntimeException(s"Failed to parse response: $e"))
+      .tapError(e => ZIO.logError(s"Failed to parse OpenAI response: $e"))
+      .mapError(e => AppError.JsonParsingError(s"Failed to parse OpenAI response: $e", response))
   }
 
-  def completeChat(systemMessage: String, prompt: String): IO[Throwable, StoryResponse] = {
-    for {
+  def completeChat(systemMessage: String, prompt: String): ZIO[Any, AppError, StoryResponse] = {
+    val effect = for {
+      _ <- ZIO.logDebug(s"Creating OpenAI chat completion request")
       params <- ZIO.succeed(createChatParams(systemMessage, prompt))
       response <- client.createChat(params)
       toolCall <- ZIO.attempt(response.choices().get(0).message().toolCalls().get().get(0))
-        .orElseFail(new RuntimeException("No tool calls in response"))
+        .mapError(e => AppError.OpenAIError("No tool calls found in OpenAI response", Some(e)))
       function <- ZIO.succeed(toolCall.function())
-      _ <- ZIO.fail(new RuntimeException(s"Unexpected function call: ${function.name()}"))
-        .when(function.name() != "analyze_story")
+      _ <- ZIO.when(function.name() != "analyze_story") {
+        ZIO.fail(AppError.ValidationError(s"Unexpected function call: ${function.name()}"))
+      }
+      _ <- ZIO.logDebug(s"Received function call: ${function.name()}")
       result <- parseResponse(function.arguments().toString())
+      _ <- ZIO.logDebug("Successfully parsed OpenAI response")
     } yield result
+    
+    AppMetrics.trackOpenAIRequest(effect)
   }
 }
 
