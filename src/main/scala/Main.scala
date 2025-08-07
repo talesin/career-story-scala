@@ -1,66 +1,88 @@
 import zio._
 import zio.json._
-import anthology.{CareerStories, OpenAIService, StoryPrompts, OpenAIClientService}
+import java.io.IOException
+import anthology.{AppConfig, AppError, AppMetrics, CareerStories, CareerStory, OpenAIService, StoryPrompts, StoryPrompt, StoryResponse, OpenAIClientService}
 
 object Main extends ZIOAppDefault {
-  val apiKeyLayer: ZLayer[Any, RuntimeException, String] = 
-    ZLayer.fromZIO(
-      System.env("OPENAI_API_KEY")
-        .someOrFail(new RuntimeException("OPENAI_API_KEY environment variable not set"))
-    )
+
+  private def loadStories(path: String): ZIO[Any, AppError, CareerStories] =
+    ZIO.readFile(path)
+      .mapError(e => AppError.FileError(s"Failed to read stories file: $path", Some(e)))
+      .flatMap { json =>
+        ZIO.fromEither(json.fromJson[CareerStories])
+          .mapError(e => AppError.JsonParsingError(s"Failed to parse career stories JSON", json))
+      }
+
+  private def loadPrompts(path: String): ZIO[Any, AppError, StoryPrompts] =
+    ZIO.readFile(path)
+      .mapError(e => AppError.FileError(s"Failed to read prompts file: $path", Some(e)))
+      .flatMap { json =>
+        ZIO.fromEither(json.fromJson[StoryPrompts])
+          .mapError(e => AppError.JsonParsingError(s"Failed to parse prompts JSON", json))
+      }
+
+  private def printStoryAnalysis(story: CareerStory, response: StoryResponse): ZIO[Any, IOException, Unit] =
+    Console.printLine(s"\nStory: ${story.title} (${story.id})") *>
+    Console.printLine("Analysis:") *>
+    Console.printLine("----------") *>
+    Console.printLine("Questions:") *>
+    ZIO.foreach(response.questions.getOrElse(List.empty)) { q =>
+      Console.printLine(s"- $q")
+    } *>
+    Console.printLine("Tips:") *>
+    ZIO.foreach(response.tips.getOrElse(List.empty)) { t =>
+      Console.printLine(s"- $t")
+    } *>
+    Console.printLine("Versions:") *>
+    ZIO.foreach(response.versions.getOrElse(List.empty)) { version =>
+      Console.printLine(s"  Situation: ${version.situation}") *>
+      Console.printLine(s"  Action: ${version.action}") *>
+      Console.printLine(s"  Result: ${version.result}")
+    } *>
+    Console.printLine("----------")
+
+  private def processStory(story: CareerStory, storyPrompt: StoryPrompt): ZIO[OpenAIService, AppError, Unit] = {
+    val effect = for {
+      _ <- ZIO.logInfo(s"Processing story: ${story.title}")
+      prompt = storyPrompt.user.replace("${story}", story.situation)
+      openAiService <- ZIO.service[OpenAIService]
+      response <- openAiService.completeChat(
+        systemMessage = storyPrompt.system,
+        prompt = prompt
+      )
+      _ <- printStoryAnalysis(story, response).mapError(e => AppError.FileError(s"Failed to print story analysis", Some(e)))
+      _ <- ZIO.logInfo(s"Completed processing story: ${story.title}")
+    } yield ()
+    
+    AppMetrics.trackStoryProcessing(effect)
+  }
 
   def run: ZIO[Any, Throwable, Unit] = {
-    for {
-      // Read and parse career stories
-      storiesJson <- ZIO.readFile("src/test/career-stories.json")
-      stories <- ZIO.fromEither(storiesJson.fromJson[CareerStories])
-        .mapError(e => new RuntimeException(s"Failed to parse career stories JSON: $e"))
+    val program = for {
+      config <- ZIO.service[AppConfig]
       
-      // Read and parse story prompts
-      promptsJson <- ZIO.readFile("src/test/story-prompts.json")
-      prompts <- ZIO.fromEither(promptsJson.fromJson[StoryPrompts])
-        .mapError(e => new RuntimeException(s"Failed to parse prompts JSON: $e"))
+      // Load data files
+      _ <- ZIO.logInfo("Loading career stories and prompts")
+      stories <- loadStories(config.storiesPath)
+      prompts <- loadPrompts(config.promptsPath)
       
       // Get the story analysis prompt
       storyPrompt <- ZIO.fromOption(prompts.prompts.get("story_analysis"))
-        .orElseFail(new RuntimeException("Story analysis prompt not found"))
+        .orElseFail(AppError.ValidationError("Story analysis prompt not found"))
       
       // Process each story
+      _ <- ZIO.logInfo(s"Processing ${stories.stories.length} stories")
       _ <- ZIO.foreach(stories.stories) { story =>
-        for {
-          // Create a prompt for the story
-          prompt <- ZIO.succeed(storyPrompt.user.replace("${story}", story.situation))
-          
-          // Get completion from OpenAI
-          openAiService <- ZIO.service[OpenAIService]
-          response <- openAiService.completeChat(
-            systemMessage = storyPrompt.system,
-            prompt = prompt
-          )
-          
-          // Print results
-          _ <- ZIO.succeed {
-            println(s"\nStory: ${story.title} (${story.id})")
-            println("Analysis:")
-            println("----------")
-            println("Questions:")
-            response.questions.getOrElse(List.empty).foreach(q => println(s"- $q"))
-            println("Tips:")
-            response.tips.getOrElse(List.empty).foreach(t => println(s"- $t"))
-            println("Versions:")
-            response.versions.getOrElse(List.empty).foreach { version =>
-              println(s"  Situation: ${version.situation}")
-              println(s"  Action: ${version.action}")
-              println(s"  Result: ${version.result}")
-            }
-            println("----------")
-          }
-        } yield ()
+        processStory(story, storyPrompt)
       }
+      
+      _ <- ZIO.logInfo("All stories processed successfully")
     } yield ()
-  }.provide(
-    apiKeyLayer,
-    OpenAIClientService.live,
-    OpenAIService.live
-  )
+
+    program.provide(
+      AppConfig.live,
+      OpenAIClientService.live,
+      OpenAIService.live
+    )
+  }
 }
